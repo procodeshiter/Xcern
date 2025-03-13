@@ -1,0 +1,9 @@
+Package: com.aevorial.xcern
+Name: Xcern
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: Ae awesome MobileSubstrate tweak!
+Maintainer: procodeshitter
+Author: procodeshitter
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000)
