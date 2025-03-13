@@ -2,10 +2,12 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
-#import "fishhook.h" // Добавьте fishhook
+#import "fishhook.h"
 
 #define CHECK_PTR(ptr) ((ptr) != NULL && (ptr) != (void *)0x20)
 #define SPOOF_VALUE ".._."
+
+#define GETRR_OFFSET 0x51186B8
 
 typedef struct {
     const char* argspoof;
@@ -77,13 +79,41 @@ void* hooked_dlsym(void* handle, const char* symbol) {
     return orig_dlsym(handle, symbol);
 }
 
+static int (*orig_close)(int);
+static int (*orig_open)(const char *, int, ...);
+
+int my_close(int fd) {
+    printf("Calling real close(%d)\n", fd);
+    return orig_close(fd);
+}
+
+int my_open(const char *path, int oflag, ...) {
+    va_list ap = {0};
+    mode_t mode = 0;
+
+    if ((oflag & O_CREAT) != 0) {
+        va_start(ap, oflag);
+        mode = va_arg(ap, int);
+        va_end(ap);
+        printf("Calling real open('%s', %d, %d)\n", path, oflag, mode);
+        return orig_open(path, oflag, mode);
+    } else {
+        printf("Calling real open('%s', %d)\n", path, oflag);
+        return orig_open(path, oflag, mode);
+    }
+}
+
 void rebind_functions() {
     void* libHandle = dlopen(NULL, RTLD_NOW);
     orig_dlsym = dlsym(libHandle, "dlsym");
+
     struct rebinding rebindings[] = {
-        {"dlsym", (void*)hooked_dlsym, (void**)&orig_dlsym}
+        {"dlsym", (void*)hooked_dlsym, (void**)&orig_dlsym},
+        {"close", my_close, (void *)&orig_close},
+        {"open", my_open, (void *)&orig_open},
+        {"getrr", getrr, (void **)&orig_getrr}
     };
-    rebind_symbols(rebindings, 1); // Используем правильную сигнатуру
+    rebind_symbols(rebindings, 4);
 }
 
 __attribute__((constructor)) void init() {
@@ -110,10 +140,36 @@ __attribute__((constructor)) void init() {
             UIViewController *rootViewController = keyWindow.rootViewController;
             [rootViewController presentViewController:alert animated:YES completion:nil];
         } else {
-            NSLog(@"Не удалось получить keyWindow для отображения alert.");
+            NSLog(@"Failed to get keyWindow for displaying alert.");
         }
     });
 
     hooked_funcs = [NSMutableArray new];
-    rebind_functions(); // Вызываем исправленную функцию
+
+    void* getrr_delegate = (void*)(GETRR_OFFSET);
+
+    for (int i = 0; i < 5; i++) {
+        NSLog(@"Using getrr_delegate #%d: %p", i + 1, getrr_delegate);
+    }
+
+    orig_getrr = dlsym(getrr_delegate, "getrr");
+    if (orig_getrr) {
+        struct rebinding rebindings[] = {
+            {"getrr", getrr, (void **)&orig_getrr}
+        };
+        rebind_symbols(rebindings, 1);
+    } else {
+        NSLog(@"Failed to find getrr function.");
+    }
+
+    if (original_function) {
+        struct rebinding rebindings[] = {
+            {"original_function", replaced_function, (void **)&original_function}
+        };
+        rebind_symbols(rebindings, 1);
+    } else {
+        NSLog(@"Failed to find original_function.");
+    }
+
+    rebind_functions();
 }
